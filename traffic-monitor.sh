@@ -175,7 +175,7 @@ while IFS= read -r line; do
         echo "[DEBUG] limit: ${limit_value} ${limit_unit} (${readable_limit_bytes} bytes)"
         echo "[DEBUG] actual: ${total_clean} ${unit_raw} (${readable_total_bytes} bytes)"
 
-        threshold_bytes=$(( limit_bytes * WARNING_THRESHOLD_PERCENT / 100 ))
+        threshold_bytes=$(awk -v lb="$limit_bytes" -v pct="$WARNING_THRESHOLD_PERCENT" 'BEGIN { printf "%.0f", lb * pct / 100 }')
         threshold_readable=$(format_bytes "$threshold_bytes")
         echo "[DEBUG] warning_threshold=${WARNING_THRESHOLD_PERCENT}% (${threshold_readable})"
         echo "[DEBUG] used: $percent_used%"
