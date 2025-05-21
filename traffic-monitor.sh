@@ -131,8 +131,8 @@ while IFS= read -r line; do
       # Считаем процент использования
       percent_used=$(awk -v used="$total_bytes" -v max="$limit_bytes" 'BEGIN {printf "%d", (used / max) * 100}')
 
-      readable_total_bytes=$(printf "%.0f" "$total_bytes")
-      readable_limit_bytes=$(printf "%.0f" "$limit_bytes")
+      readable_total_bytes=$(awk -v n="$total_bytes" 'BEGIN {printf "%.0f", n}')
+      readable_limit_bytes=$(awk -v n="$limit_bytes" 'BEGIN {printf "%.0f", n}')
 
       [[ "$DEBUG" -eq 1 ]] && {
         echo "[DEBUG] current_month=$current_month"
