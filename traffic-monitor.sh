@@ -17,6 +17,7 @@ send_message() {
              -d chat_id="${CHAT_ID}" \
              -d text="${MESSAGE}" \
              -d parse_mode="HTML"
+  echo
 }
 
 # Файлы состояний уведомлений
@@ -42,6 +43,9 @@ while [[ $# -gt 0 ]]; do
         # Включение режима отладки
         -debug) DEBUG=1
                 shift ;;
+        # Отправить тестовое уведомление
+        -test) send_message "Тестовое уведомление."
+                exit 0 ;;
         # Установка имени хоста для уведомлений
         -host) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
                 HOST="$2"
@@ -64,6 +68,22 @@ while [[ $# -gt 0 ]]; do
                 echo "Ошибка: опция -month требует указания месяца. Например: 2025-05"
                 exit 1
             fi ;;
+        # Передать лимит через аргумент
+        -limit) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                LIMIT="$2"
+                shift 2
+            else
+                echo "Ошибка: опция -limit требует указания лимита трафика. Например: '250 GiB или 1 TiB'"
+                exit 1
+            fi ;;
+        # Передать порог предварительного уведомления через аргумент
+        -threshold) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                WARNING_THRESHOLD_PERCENT="$2"
+                shift 2
+            else
+                echo "Ошибка: опция -threshold требует указания порога в процентах. Например: '90'"
+                exit 1
+            fi ;;
         -*) echo "Неизвестный аргумент: $1"; exit 1 ;;
         *) echo "Неизвестный аргумент: $1"; exit 1 ;;
     esac
@@ -78,6 +98,18 @@ to_bytes() {
     else if (u=="GiB") print v*2^30;
     else if (u=="TiB") print v*2^40;
     else print 0;
+  }'
+}
+
+# Функция для преобразования байт в удобочитаемый формат
+format_bytes() {
+  local b=$1
+  awk -v b="$b" 'BEGIN {
+    if      (b >= 2^40) printf "%.2f TiB", b/2^40;
+    else if (b >= 2^30) printf "%.2f GiB", b/2^30;
+    else if (b >= 2^20) printf "%.2f MiB", b/2^20;
+    else if (b >= 2^10) printf "%.2f KiB", b/2^10;
+    else                printf "%d bytes", b;
   }'
 }
 
@@ -109,7 +141,9 @@ limit_unit=$(echo "$LIMIT" | awk '{print $2}')
 limit_bytes=$(to_bytes "$limit_value" "$limit_unit")
 
 # ==== ОБРАБОТКА VNSTAT ====
-vnstat_output=$(vnstat -m) || { echo "Ошибка: vnstat упал"; exit 1; }
+if ! vnstat_output=$(vnstat -m); then
+  echo "Ошибка: vnstat упал"; exit 1
+fi
 
 # Проверяем, есть ли статистика за текущий месяц
 if ! grep -qw "$current_month" <<< "$vnstat_output"; then
@@ -141,8 +175,13 @@ while IFS= read -r line; do
         echo "[DEBUG] limit: ${limit_value} ${limit_unit} (${readable_limit_bytes} bytes)"
         echo "[DEBUG] actual: ${total_clean} ${unit_raw} (${readable_total_bytes} bytes)"
 
-        echo "[DEBUG] warning_threshold=$WARNING_THRESHOLD_PERCENT%"
+        threshold_bytes=$(( limit_bytes * WARNING_THRESHOLD_PERCENT / 100 ))
+        threshold_readable=$(format_bytes "$threshold_bytes")
+        echo "[DEBUG] warning_threshold=${WARNING_THRESHOLD_PERCENT}% (${threshold_readable})"
         echo "[DEBUG] used: $percent_used%"
+
+        echo "[DEBUG] warn state: '$(<"$STATE_FILE_WARN")'"
+        echo "[DEBUG] hard state: '$(<"$STATE_FILE_HARD")'"
         messages_status
         echo
       }
@@ -154,18 +193,19 @@ while IFS= read -r line; do
 Использовано ${percent_used}% трафика за месяц
 ${total_clean} ${unit_raw} из ${LIMIT}"
 
-        [[ "$DEBUG" -eq 1 ]] && echo "[DEBUG] Отправляю предупреждения.."
-
-        # Логгируем
-        echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes} (${percent_used}%)"
-        echo "Отправляю предварительное оповещение о трафике.."
-
-        # Отправляем уведомление
-        send_message "$MESSAGE"
+        if [[ "$DEBUG" -eq 1 ]]; then
+            echo "[DEBUG] Отправляю (как-бы) предупреждения.."
+        else
+            # Логгируем
+            echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes} (${percent_used}%)"
+            echo "Отправляю предварительное оповещение о трафике.."
+            # Отправляем уведомление
+            send_message "$MESSAGE"
+        fi
 
         echo "$current_month" > "$STATE_FILE_WARN"
         last_warn_month="$current_month"
-        echo -e "\n\n"
+        echo
       fi
 
       # === ПРЕВЫШЕНИЕ ===
@@ -175,18 +215,19 @@ ${total_clean} ${unit_raw} из ${LIMIT}"
 Превышен месячный лимит трафика!
 ${total_clean} ${unit_raw} (> ${LIMIT})"
 
-        [[ "$DEBUG" -eq 1 ]] && echo "[DEBUG] Отправляю основное уведомление.."
-
-        # Логгируем
-        echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes}"
-        echo "Отправляю уведомление о превышении лимита."
-
-        # Отправляем уведомление
-        send_message "$MESSAGE"
+        if [[ "$DEBUG" -eq 1 ]]; then
+            echo "[DEBUG] Отправляю (как-бы) основное уведомление.."
+        else
+            # Логгируем
+            echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes}"
+            echo "Отправляю уведомление о превышении лимита."
+            # Отправляем уведомление
+            send_message "$MESSAGE"
+        fi
 
         echo "$current_month" > "$STATE_FILE_HARD"
         last_hard_month="$current_month"
-        echo -e "\n\n"
+        echo
       fi
 
       break
