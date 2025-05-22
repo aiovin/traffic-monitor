@@ -1,6 +1,7 @@
 # traffic-monitor
-Мониторинг месячного трафика через `vnstat` с уведомлениями в Telegram или ntfy.sh<br>
-Скрипт пришлет уведомление о превышении указанного порога в процентах и при достижении лимита за текущий месяц.
+Мониторинг месячного трафика через `vnstat` с уведомлениями в Telegram или ntfy.sh<br><br>
+При добавлении задачи в cron скрипт пришлет уведомление о превышении указанного порога в процентах и при достижении лимита за текущий месяц.<br><br>
+Есть функция отчета, которая присылает сводку суммарного трафика за текущий месяц.
 
 <img src="https://raw.githubusercontent.com/aiovin/traffic-monitor/refs/heads/main/warning.png" height="90px"> <img src="https://raw.githubusercontent.com/aiovin/traffic-monitor/refs/heads/main/report.jpg" height="95px">
 
@@ -53,7 +54,7 @@ crontab -e
 > ```
 > 0 0 * * * /полный/путь/к/скрипту/traffic-monitor.sh -report >> /var/tmp/traffic-monitor.log 2>&1
 > ```
-> Еженедельный (в 00:00 каждого понедельника)
+> Еженедельный (В 00:00 каждого понедельника)
 > ```
 > 0 0 * * 1 /полный/путь/к/скрипту/traffic-monitor.sh -report >> /var/tmp/traffic-monitor.log 2>&1
 > ```
