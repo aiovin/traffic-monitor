@@ -6,18 +6,50 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 LIMIT="500 GiB"
 WARNING_THRESHOLD_PERCENT=90
 
+# Тип уведомлений (tg/ntfy)
+MSG_TYPE="tg"
+
 # Токен Telegram бота и ID пользователя
 BOT_TOKEN="your_token"
 CHAT_ID="your_id"
 
+# Топик ntfy.sh
+NTFY_TOPIC="your_topic"
+
 # Функция для отправки уведомлений
 send_message() {
-  local MESSAGE="$1"
-  curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-             -d chat_id="${CHAT_ID}" \
-             -d text="${MESSAGE}" \
-             -d parse_mode="HTML"
-  echo
+  local MSG_TYPE="$1"
+  local MESSAGE="$2"
+
+  case "$MSG_TYPE" in
+      "tg")
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+               -d chat_id="${CHAT_ID}" \
+               -d text="${MESSAGE}" \
+               -d parse_mode="HTML"
+          echo
+          ;;
+
+      "ntfy")
+          # Из MESSAGE отделяем заголовок (имя хоста) и тело (само сообщение)
+          local TITLE="${MESSAGE%%$'\n'*}"
+          local BODY="${MESSAGE#*$'\n'}"
+
+          if [[ "$BODY" == "$MESSAGE" ]]; then
+            TITLE=""
+          fi
+
+          curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
+               -H "Title: ${TITLE}" \
+               -H "Priority: high" \
+               -d "$BODY"
+          ;;
+
+      *)
+          echo "Ошибка: недопустимый тип уведомлений. Поддерживаются: 'tg', 'ntfy'."
+          exit 1
+          ;;
+  esac
 }
 
 # Файлы состояний уведомлений
@@ -43,9 +75,11 @@ while [[ $# -gt 0 ]]; do
         # Включение режима отладки
         -debug) DEBUG=1
                 shift ;;
+
         # Отправить тестовое уведомление
-        -test) send_message "Тестовое уведомление."
+        -test) send_message "${MSG_TYPE}" "Тестовое уведомление."
                 exit 0 ;;
+
         # Установка имени хоста для уведомлений
         -host) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
                 HOST="$2"
@@ -54,12 +88,23 @@ while [[ $# -gt 0 ]]; do
                 echo "Ошибка: опция -host требует указания имени хоста."
                 exit 1
             fi ;;
+
+        # Передать тип уведомлений через аргумент
+        -msgtype) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                MSG_TYPE="$2"
+                shift 2
+            else
+                echo "Ошибка: опция -msgtype требует указания типа уведомлений."
+                exit 1
+            fi ;;
+
         # "Забыть" что уведомления за месяц уже отправлялись
         -reset)
             > "$STATE_FILE_WARN"
             > "$STATE_FILE_HARD"
             echo "Файлы статусов уведомлений были очищены."
             exit 0 ;;
+
         # Указать "текущий" месяц
         -month) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
                 current_month="$2"
@@ -68,6 +113,7 @@ while [[ $# -gt 0 ]]; do
                 echo "Ошибка: опция -month требует указания месяца. Например: 2025-05"
                 exit 1
             fi ;;
+
         # Передать лимит через аргумент
         -limit) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
                 LIMIT="$2"
@@ -76,6 +122,7 @@ while [[ $# -gt 0 ]]; do
                 echo "Ошибка: опция -limit требует указания лимита трафика. Например: '250 GiB или 1 TiB'"
                 exit 1
             fi ;;
+
         # Передать порог предварительного уведомления через аргумент
         -threshold) if [[ -n "$2" && ! "$2" =~ ^- ]]; then
                 WARNING_THRESHOLD_PERCENT="$2"
@@ -84,6 +131,7 @@ while [[ $# -gt 0 ]]; do
                 echo "Ошибка: опция -threshold требует указания порога в процентах. Например: '90'"
                 exit 1
             fi ;;
+
         -*) echo "Неизвестный аргумент: $1"; exit 1 ;;
         *) echo "Неизвестный аргумент: $1"; exit 1 ;;
     esac
@@ -200,7 +248,7 @@ ${total_clean} ${unit_raw} из ${LIMIT}"
             echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes} (${percent_used}%)"
             echo "Отправляю предварительное оповещение о трафике.."
             # Отправляем уведомление
-            send_message "$MESSAGE"
+            send_message "${MSG_TYPE}" "$MESSAGE"
         fi
 
         echo "$current_month" > "$STATE_FILE_WARN"
@@ -222,7 +270,7 @@ ${total_clean} ${unit_raw} (> ${LIMIT})"
             echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes}"
             echo "Отправляю уведомление о превышении лимита."
             # Отправляем уведомление
-            send_message "$MESSAGE"
+            send_message "${MSG_TYPE}" "$MESSAGE"
         fi
 
         echo "$current_month" > "$STATE_FILE_HARD"
