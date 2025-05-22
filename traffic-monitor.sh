@@ -58,6 +58,7 @@ STATE_FILE_HARD="/var/tmp/traffic_hard_sent"
 
 # Значения по умолчанию
 DEBUG=0
+REPORT=0
 HOST=$(hostname)
 current_month=$(date +'%Y-%m')
 
@@ -74,6 +75,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         # Включение режима отладки
         -debug) DEBUG=1
+                shift ;;
+
+        # Отправить отчет о трафике
+        -report) REPORT=1
                 shift ;;
 
         # Отправить тестовое уведомление
@@ -215,6 +220,21 @@ while IFS= read -r line; do
 
       readable_total_bytes=$(awk -v n="$total_bytes" 'BEGIN {printf "%.0f", n}')
       readable_limit_bytes=$(awk -v n="$limit_bytes" 'BEGIN {printf "%.0f", n}')
+
+      # === REPORT: единичное отправление сводки ===
+      if [[ "$REPORT" -eq 1 ]]; then
+
+        MESSAGE="📊 ${HOST^}
+Сводка по трафику за текущий месяц
+Использовано: ${total_clean} ${unit_raw}"
+
+        # Логгируем
+        echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Отправляю сводку трафика за текущий месяц.."
+
+        send_message "${MSG_TYPE}" "$MESSAGE"
+        echo
+        exit 0
+      fi
 
       [[ "$DEBUG" -eq 1 ]] && {
         echo "[DEBUG] current_month=$current_month"
