@@ -26,8 +26,7 @@ send_message() {
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
                -d chat_id="${CHAT_ID}" \
                -d text="${MESSAGE}" \
-               -d parse_mode="HTML"
-          echo
+               -d parse_mode="HTML" | (command -v jq &>/dev/null && jq . || { cat; echo; })
           ;;
 
       "ntfy")
@@ -42,7 +41,7 @@ send_message() {
           curl -s -X POST "https://ntfy.sh/${NTFY_TOPIC}" \
                -H "Title: ${TITLE}" \
                -H "Priority: high" \
-               -d "$BODY"
+               -d "$BODY" | (command -v jq &>/dev/null && jq . || cat)
           ;;
 
       *)
@@ -52,13 +51,15 @@ send_message() {
   esac
 }
 
-# Файлы состояний уведомлений
+# Файлы состояний уведомлений и пошлый report
 STATE_FILE_WARN="/var/tmp/traffic_warn_sent"
 STATE_FILE_HARD="/var/tmp/traffic_hard_sent"
+LAST_REPORT="/var/tmp/last_report"
 
 # Значения по умолчанию
-DEBUG=0
+DEBUG=1
 REPORT=0
+MONTHLY="no"
 HOST=$(hostname)
 current_month=$(date +'%Y-%m')
 
@@ -78,8 +79,15 @@ while [[ $# -gt 0 ]]; do
                 shift ;;
 
         # Отправить отчет о трафике
-        -report) REPORT=1
-                shift ;;
+        -report)
+              REPORT=1
+              if [[ "$2" == "monthly" ]]; then
+                MONTHLY="yes"
+                shift 2
+              else
+                shift
+              fi
+              ;;
 
         # Отправить тестовое уведомление
         -test) send_message "${MSG_TYPE}" "Тестовое уведомление."
@@ -107,7 +115,8 @@ while [[ $# -gt 0 ]]; do
         -reset)
             > "$STATE_FILE_WARN"
             > "$STATE_FILE_HARD"
-            echo "Файлы статусов уведомлений были очищены."
+            > "$LAST_REPORT"
+            echo "Файлы статусов уведомлений и история отчетов были очищены."
             exit 0 ;;
 
         # Указать "текущий" месяц
@@ -146,11 +155,12 @@ done
 to_bytes() {
   local val=$1 unit=$2
   awk -v v="$val" -v u="$unit" 'BEGIN {
-    if      (u=="KiB") print v*2^10;
-    else if (u=="MiB") print v*2^20;
-    else if (u=="GiB") print v*2^30;
-    else if (u=="TiB") print v*2^40;
-    else print 0;
+    if      (u=="KiB") x=v*2^10;
+    else if (u=="MiB") x=v*2^20;
+    else if (u=="GiB") x=v*2^30;
+    else if (u=="TiB") x=v*2^40;
+    else               x=0;
+    printf "%.0f", x
   }'
 }
 
@@ -218,41 +228,81 @@ while IFS= read -r line; do
       # Считаем процент использования
       percent_used=$(awk -v used="$total_bytes" -v max="$limit_bytes" 'BEGIN {printf "%d", (used / max) * 100}')
 
-      readable_total_bytes=$(awk -v n="$total_bytes" 'BEGIN {printf "%.0f", n}')
-      readable_limit_bytes=$(awk -v n="$limit_bytes" 'BEGIN {printf "%.0f", n}')
+      if [[ "$DEBUG" -eq 1 && "$REPORT" -ne 1 ]]; then
+        echo "[DEBUG] current_month=$current_month"
+        echo "[DEBUG] matched line: $line"
+        
+        echo "[DEBUG] limit: ${limit_value} ${limit_unit} (${limit_bytes} bytes)"
+        echo "[DEBUG] actual: ${total_clean} ${unit_raw} (${total_bytes} bytes)"
+
+        threshold_readable=$(format_bytes $(( limit_bytes * WARNING_THRESHOLD_PERCENT / 100 )))
+        echo "[DEBUG] warning_threshold=${WARNING_THRESHOLD_PERCENT}% (${threshold_readable})"
+        echo "[DEBUG] used: $percent_used%"
+        echo "[DEBUG] warn state: '$(<"$STATE_FILE_WARN")'"
+        echo "[DEBUG] hard state: '$(<"$STATE_FILE_HARD")'"
+        messages_status
+      fi
 
       # === REPORT: единичное отправление сводки ===
       if [[ "$REPORT" -eq 1 ]]; then
 
+        # Читаем предыдущую проверку (если она была)
+        if [[ -s "$LAST_REPORT" ]]; then
+            read -r last_month last_traffic < "$LAST_REPORT"
+        else
+            last_month=""
+            last_traffic=""
+        fi
+
+        # Проверка: есть ли валидные прошлые данные
+        if [[ "$last_traffic" =~ ^[0-9]+$ ]]; then
+            # Если месяц совпадает или режим monthly - показываем разницу
+            if [[ "$last_month" == "$current_month" ]] || [[ "$MONTHLY" == "yes" ]]; then
+                traffic_diff=$(( total_bytes - last_traffic ))
+
+                if   (( traffic_diff > 0 )); then diff_message=" (+$(format_bytes "$traffic_diff"))"
+                elif (( traffic_diff < 0 )); then diff_message=" (-$(format_bytes "$(( -traffic_diff ))"))"
+                else diff_message=" (±0 bytes)"
+                fi
+            else
+                diff_message=""
+            fi
+        else
+            # Первый запуск — не показываем сравнение
+            diff_message=""
+        fi
+
         MESSAGE="📊 ${HOST^}
 Сводка по трафику за текущий месяц
-Использовано: ${total_clean} ${unit_raw}"
+Использовано: ${total_clean} ${unit_raw}${diff_message}"
 
-        # Логгируем
-        echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Отправляю сводку трафика за текущий месяц.."
+        if [[ "$DEBUG" -eq 1 ]]; then
+            echo "[DEBUG] current_month: $current_month"
+            echo "[DEBUG] is monthly mode: $MONTHLY"
+            echo "[DEBUG] LAST_REPORT file content: '$(<"$LAST_REPORT")'"
+            # echo "[DEBUG] parsed last_month: '$last_month'"
+            # echo "[DEBUG] parsed last_traffic: '$last_traffic'"
+            echo "[DEBUG] current total_bytes: '$total_bytes'"
+            echo "[DEBUG] calculated traffic_diff: '$traffic_diff'"
+            echo "[DEBUG] final diff_message: '$diff_message'"
 
-        send_message "${MSG_TYPE}" "$MESSAGE"
-        echo
+            echo -e "\n[DEBUG] Отправляю (как-бы) отчет в '${MSG_TYPE}'. Текст сообщения:"
+            echo "$MESSAGE"
+        else
+            # Логгируем
+            echo -e "[REPORT] [$(date +'%d-%m-%y %H:%M:%S %Z')] Режим monthly: $MONTHLY. Прошлый замер: '$(<"$LAST_REPORT")'. Текущий: '$total_bytes'"
+            echo "Отправляю сводку трафика за текущий месяц в '${MSG_TYPE}'.."
+
+            # Отправляем уведомление
+            send_message "${MSG_TYPE}" "$MESSAGE"
+            echo
+        fi
+
+        # Сохраняем текущие данные (месяц + трафик)
+        echo "$current_month $total_bytes" > "$LAST_REPORT"
+
         exit 0
       fi
-
-      [[ "$DEBUG" -eq 1 ]] && {
-        echo "[DEBUG] current_month=$current_month"
-        echo "[DEBUG] matched line: $line"
-        
-        echo "[DEBUG] limit: ${limit_value} ${limit_unit} (${readable_limit_bytes} bytes)"
-        echo "[DEBUG] actual: ${total_clean} ${unit_raw} (${readable_total_bytes} bytes)"
-
-        threshold_bytes=$(awk -v lb="$limit_bytes" -v pct="$WARNING_THRESHOLD_PERCENT" 'BEGIN { printf "%.0f", lb * pct / 100 }')
-        threshold_readable=$(format_bytes "$threshold_bytes")
-        echo "[DEBUG] warning_threshold=${WARNING_THRESHOLD_PERCENT}% (${threshold_readable})"
-        echo "[DEBUG] used: $percent_used%"
-
-        echo "[DEBUG] warn state: '$(<"$STATE_FILE_WARN")'"
-        echo "[DEBUG] hard state: '$(<"$STATE_FILE_HARD")'"
-        messages_status
-        echo
-      }
 
       # === ПРЕДУПРЕЖДЕНИЕ ===
       if [[ "$percent_used" -ge "$WARNING_THRESHOLD_PERCENT" && "$percent_used" -lt 100 && "$last_warn_month" != "$current_month" ]]; then
@@ -262,40 +312,44 @@ while IFS= read -r line; do
 ${total_clean} ${unit_raw} из ${LIMIT}"
 
         if [[ "$DEBUG" -eq 1 ]]; then
-            echo "[DEBUG] Отправляю (как-бы) предупреждения.."
+            echo -e "\n[DEBUG] Отправляю (как-бы) предупреждения в '${MSG_TYPE}'. Текст сообщения:"
+            echo "$MESSAGE"
         else
             # Логгируем
-            echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes} (${percent_used}%)"
-            echo "Отправляю предварительное оповещение о трафике.."
+            echo -e "[WARN] [$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${total_bytes} байт из ${limit_bytes} (${percent_used}%)"
+            echo "Отправляю предварительное оповещение о трафике в '${MSG_TYPE}'.."
+
             # Отправляем уведомление
             send_message "${MSG_TYPE}" "$MESSAGE"
+            echo
         fi
 
         echo "$current_month" > "$STATE_FILE_WARN"
         last_warn_month="$current_month"
-        echo
       fi
 
       # === ПРЕВЫШЕНИЕ ===
-      if (( readable_total_bytes >= readable_limit_bytes )) && [[ "$last_hard_month" != "$current_month" ]]; then
+      if (( total_bytes >= limit_bytes )) && [[ "$last_hard_month" != "$current_month" ]]; then
 
         MESSAGE="🚨 ${HOST^}
 Превышен месячный лимит трафика!
 ${total_clean} ${unit_raw} (> ${LIMIT})"
 
         if [[ "$DEBUG" -eq 1 ]]; then
-            echo "[DEBUG] Отправляю (как-бы) основное уведомление.."
+            echo -e "\n[DEBUG] Отправляю (как-бы) основное уведомление в '${MSG_TYPE}'. Текст сообщения:"
+            echo "$MESSAGE"
         else
             # Логгируем
-            echo -e "[$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${readable_total_bytes} байт из ${readable_limit_bytes}"
-            echo "Отправляю уведомление о превышении лимита."
+            echo -e "[ALERT] [$(date +'%d-%m-%y %H:%M:%S %Z')] Использовано ${total_bytes} байт из ${limit_bytes}"
+            echo "Отправляю уведомление о превышении лимита в '${MSG_TYPE}'.."
+
             # Отправляем уведомление
             send_message "${MSG_TYPE}" "$MESSAGE"
+            echo
         fi
 
         echo "$current_month" > "$STATE_FILE_HARD"
         last_hard_month="$current_month"
-        echo
       fi
 
       break
