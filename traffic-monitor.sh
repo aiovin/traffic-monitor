@@ -4,6 +4,7 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # ==== НАСТРОЙКИ ====
 # Лимит трафика (например, "100 GiB" или "1 TiB") и порог в процентах
 LIMIT="500 GiB"
+# Установить на "100" чтобы предупреждающее уведомление не пресылалось
 WARNING_THRESHOLD_PERCENT=90
 
 # Тип уведомлений (tg/ntfy)
@@ -58,8 +59,11 @@ LAST_REPORT="/var/tmp/last_report"
 
 # Значения по умолчанию
 DEBUG=0
+
 REPORT=0
 MONTHLY="no"
+CLEAN="no"
+
 HOST=$(hostname)
 current_month=$(date +'%Y-%m')
 
@@ -83,6 +87,9 @@ while [[ $# -gt 0 ]]; do
               REPORT=1
               if [[ "$2" == "monthly" ]]; then
                 MONTHLY="yes"
+                shift 2
+              elif [[ "$2" == "clean" ]]; then
+                CLEAN="yes"
                 shift 2
               else
                 shift
@@ -269,6 +276,10 @@ while IFS= read -r line; do
             fi
         else
             # Первый запуск — не показываем сравнение
+            diff_message=""
+        fi
+
+        if [[ "$CLEAN" == "yes" ]]; then
             diff_message=""
         fi
 
