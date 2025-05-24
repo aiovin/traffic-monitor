@@ -90,5 +90,5 @@ traffic-monitor.sh [опции]
 ### Файл логов
 
 ```
-/var/tmp/traffic-monitor.log
+/var/tmp/traffic_monitor.log
 ```
