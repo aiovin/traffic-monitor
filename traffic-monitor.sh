@@ -51,13 +51,13 @@ send_message() {
   esac
 }
 
-# Файлы состояний уведомлений и пошлый report
+# Файлы состояний уведомлений и прошлый report
 STATE_FILE_WARN="/var/tmp/traffic_warn_sent"
 STATE_FILE_HARD="/var/tmp/traffic_hard_sent"
 LAST_REPORT="/var/tmp/last_report"
 
 # Значения по умолчанию
-DEBUG=1
+DEBUG=0
 REPORT=0
 MONTHLY="no"
 HOST=$(hostname)
