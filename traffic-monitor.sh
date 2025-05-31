@@ -301,7 +301,7 @@ while IFS= read -r line; do
             echo "$MESSAGE"
         else
             # Логгируем
-            echo -e "[REPORT] [$(date +'%d-%m-%y %H:%M:%S %Z')] Режим monthly: $MONTHLY. Прошлый замер: '$(<"$LAST_REPORT")'. Текущий: '$total_bytes'"
+            echo -e "[REPORT] [$(date +'%d-%m-%y %H:%M:%S %Z')] Режим monthly: $MONTHLY. Прошлый замер: '$([ -f "$LAST_REPORT" ] && awk '{print $2}' "$LAST_REPORT" || echo "нет данных")'. Текущий: '$total_bytes'"
             echo "Отправляю сводку трафика за текущий месяц в '${MSG_TYPE}'.."
 
             # Отправляем уведомление
